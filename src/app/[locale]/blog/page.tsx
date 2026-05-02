@@ -1,4 +1,4 @@
-import { useTranslations } from "next-intl";
+import { getTranslations } from "next-intl/server";
 import { getAllPosts } from "@/lib/mdx";
 import { BlogCard } from "@/components/blog/BlogCard";
 
@@ -8,7 +8,7 @@ interface BlogListPageProps {
 
 export default async function BlogListPage({ params }: BlogListPageProps) {
   const { locale } = await params;
-  const t = useTranslations("blog");
+  const t = await getTranslations({ locale, namespace: "blog" });
   const posts = getAllPosts(locale);
 
   return (

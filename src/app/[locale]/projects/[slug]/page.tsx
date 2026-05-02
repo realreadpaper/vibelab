@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { getTranslations } from "next-intl/server";
 import { getProject, getAllProjectSlugs, getPostsForProject } from "@/lib/mdx";
 import { MDXContent } from "@/components/blog/MDXContent";
 import { BlogCard } from "@/components/blog/BlogCard";
@@ -26,9 +26,9 @@ export async function generateMetadata({ params }: ProjectPageProps) {
 export default async function ProjectPage({ params }: ProjectPageProps) {
   const { locale, slug } = await params;
   const project = getProject(slug, locale);
-  const t = useTranslations("projects");
-  const blogT = useTranslations("blog");
-  const commonT = useTranslations("common");
+  const t = await getTranslations({ locale, namespace: "projects" });
+  const blogT = await getTranslations({ locale, namespace: "blog" });
+  const commonT = await getTranslations({ locale, namespace: "common" });
 
   if (!project) {
     notFound();

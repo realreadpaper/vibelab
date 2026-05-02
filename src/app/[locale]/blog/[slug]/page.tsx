@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { getTranslations } from "next-intl/server";
 import { getPost, getAllPostSlugs } from "@/lib/mdx";
 import { MDXContent } from "@/components/blog/MDXContent";
 import { Link } from "@/i18n/navigation";
@@ -25,8 +25,8 @@ export async function generateMetadata({ params }: BlogPostPageProps) {
 export default async function BlogPostPage({ params }: BlogPostPageProps) {
   const { locale, slug } = await params;
   const post = getPost(slug, locale);
-  const t = useTranslations("blog");
-  const commonT = useTranslations("common");
+  const t = await getTranslations({ locale, namespace: "blog" });
+  const commonT = await getTranslations({ locale, namespace: "common" });
 
   if (!post) {
     notFound();

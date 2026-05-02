@@ -1,4 +1,4 @@
-import { useTranslations } from "next-intl";
+import { getTranslations } from "next-intl/server";
 import { getAllProjects } from "@/lib/mdx";
 import { ProjectCard } from "@/components/projects/ProjectCard";
 
@@ -8,7 +8,7 @@ interface ProjectsPageProps {
 
 export default async function ProjectsPage({ params }: ProjectsPageProps) {
   const { locale } = await params;
-  const t = useTranslations("projects");
+  const t = await getTranslations({ locale, namespace: "projects" });
   const projects = getAllProjects(locale);
 
   return (
