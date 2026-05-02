@@ -1,0 +1,147 @@
+@import "tailwindcss";
+
+/* ===== Glassmorphism Design System ===== */
+/* Dark gradient background is default. Light mode overrides below. */
+
+:root {
+  --glass-bg: rgba(255, 255, 255, 0.05);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-bg-hover: rgba(255, 255, 255, 0.08);
+  --glass-border-hover: rgba(255, 255, 255, 0.2);
+
+  --text-primary: rgba(255, 255, 255, 0.95);
+  --text-secondary: rgba(255, 255, 255, 0.65);
+  --text-muted: rgba(255, 255, 255, 0.4);
+
+  --accent-from: #a78bfa;
+  --accent-via: #8b5cf6;
+  --accent-to: #60a5fa;
+
+  --bg-gradient-from: #020617;
+  --bg-gradient-via: #0f0728;
+  --bg-gradient-to: #020617;
+}
+
+/* Light mode override */
+.light {
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-bg-hover: rgba(255, 255, 255, 0.85);
+  --glass-border-hover: rgba(0, 0, 0, 0.15);
+
+  --text-primary: rgba(0, 0, 0, 0.9);
+  --text-secondary: rgba(0, 0, 0, 0.6);
+  --text-muted: rgba(0, 0, 0, 0.4);
+
+  --bg-gradient-from: #f8fafc;
+  --bg-gradient-via: #f1f5f9;
+  --bg-gradient-to: #f8fafc;
+}
+
+@theme inline {
+  --color-background: var(--bg-gradient-from);
+  --color-foreground: var(--text-primary);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-glass-bg: var(--glass-bg);
+  --color-glass-border: var(--glass-border);
+  --color-accent-from: var(--accent-from);
+  --color-accent-to: var(--accent-to);
+}
+
+/* ===== Utility Classes ===== */
+
+@utility glass {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 16px;
+}
+
+@utility glass-hover {
+  transition: background 0.3s ease, border-color 0.3s ease, transform 0.3s ease;
+}
+.glass-hover:hover {
+  background: var(--glass-bg-hover);
+  border-color: var(--glass-border-hover);
+}
+
+@utility gradient-text {
+  background: linear-gradient(
+    135deg,
+    var(--accent-from),
+    var(--accent-via),
+    var(--accent-to)
+  );
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+@utility gradient-bg {
+  background: linear-gradient(
+    135deg,
+    var(--bg-gradient-from),
+    var(--bg-gradient-via),
+    var(--bg-gradient-to)
+  );
+}
+
+/* ===== Base Styles ===== */
+
+body {
+  color: var(--text-primary);
+  font-family: var(--font-sans, Arial, Helvetica, sans-serif);
+}
+
+/* Animated background glow orbs */
+.bg-glow::before {
+  content: "";
+  position: fixed;
+  top: -20%;
+  left: -10%;
+  width: 60%;
+  height: 60%;
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.15), transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.bg-glow::after {
+  content: "";
+  position: fixed;
+  bottom: -10%;
+  right: -10%;
+  width: 50%;
+  height: 50%;
+  background: radial-gradient(circle, rgba(96, 165, 250, 0.1), transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* prose overrides for MDX content */
+.prose {
+  color: var(--text-secondary);
+  max-width: 65ch;
+}
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  color: var(--text-primary);
+}
+.prose a {
+  color: var(--accent-from);
+}
+.prose code {
+  color: var(--accent-to);
+}
+.prose pre {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+}
+.prose img {
+  border-radius: 12px;
+}

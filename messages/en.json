@@ -1,0 +1,51 @@
+{
+  "site": {
+    "title": "Long Jiang",
+    "description": "Exploring Vibe Coding — An experiment log of building products with AI",
+    "nav": {
+      "home": "Home",
+      "blog": "Blog",
+      "projects": "Projects",
+      "about": "About"
+    },
+    "footer": {
+      "builtWith": "Built with Next.js",
+      "rss": "RSS Feed"
+    }
+  },
+  "home": {
+    "greeting": "Hi, I'm Long Jiang",
+    "tagline": "I explore the frontier of Vibe Coding — turning ideas into products with AI. This is where I document my experiments, reflections, and discoveries.",
+    "latestPosts": "Latest Posts",
+    "viewAll": "View All →"
+  },
+  "blog": {
+    "title": "Blog",
+    "description": "Insights, retrospectives, and methodologies on Vibe Coding",
+    "publishedOn": "Published on",
+    "tags": "Tags",
+    "relatedProject": "Related Project",
+    "noPosts": "No posts yet",
+    "readMore": "Read More"
+  },
+  "projects": {
+    "title": "Projects",
+    "description": "Products built with AI collaboration",
+    "techStack": "Tech Stack",
+    "relatedPosts": "Related Posts",
+    "viewDemo": "View Demo",
+    "viewSource": "Source Code"
+  },
+  "about": {
+    "title": "About",
+    "description": "A developer accelerating creation through AI",
+    "bio": "I'm Long Jiang, a software engineer passionate about AI-driven development. I believe Vibe Coding is transforming how we create software — collaborating with AI allows us to turn ideas into reality faster than ever. This site documents my explorations, experiments, and thoughts in this new paradigm.",
+    "skills": "Skills & Tools",
+    "contact": "Contact"
+  },
+  "common": {
+    "back": "← Back",
+    "notFound": "Page Not Found",
+    "notFoundDesc": "The page you're looking for doesn't exist or has been moved."
+  }
+}

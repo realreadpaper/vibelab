@@ -1,0 +1,51 @@
+{
+  "site": {
+    "title": "Long Jiang",
+    "description": "Vibe Coding 探索者 — 用 AI 构建产品的实验日志",
+    "nav": {
+      "home": "首页",
+      "blog": "博客",
+      "projects": "项目",
+      "about": "关于"
+    },
+    "footer": {
+      "builtWith": "用 Next.js 构建",
+      "rss": "RSS 订阅"
+    }
+  },
+  "home": {
+    "greeting": "Hi，我是 Long Jiang",
+    "tagline": "我探索 Vibe Coding 的边界——用 AI 将想法变成产品。这里记录我的实验、复盘和思考。",
+    "latestPosts": "最新文章",
+    "viewAll": "查看全部 →"
+  },
+  "blog": {
+    "title": "博客",
+    "description": "Vibe Coding 的经验、复盘与方法论",
+    "publishedOn": "发布于",
+    "tags": "标签",
+    "relatedProject": "关联项目",
+    "noPosts": "还没有文章",
+    "readMore": "阅读更多"
+  },
+  "projects": {
+    "title": "项目",
+    "description": "用 AI 构建的产品集合",
+    "techStack": "技术栈",
+    "relatedPosts": "相关文章",
+    "viewDemo": "查看 Demo",
+    "viewSource": "源代码"
+  },
+  "about": {
+    "title": "关于我",
+    "description": "一个通过 AI 加速创造的开发者",
+    "bio": "我是 Long Jiang，一名热衷于 AI 驱动开发的软件工程师。我相信 Vibe Coding 正在改变我们创造软件的方式——通过与 AI 协作，我们能以前所未有的速度将想法变为现实。这个站点记录了我在这个新范式下的探索、实验和思考。",
+    "skills": "技能与工具",
+    "contact": "联系方式"
+  },
+  "common": {
+    "back": "← 返回",
+    "notFound": "页面不存在",
+    "notFoundDesc": "你访问的页面可能已被移除或链接错误。"
+  }
+}
