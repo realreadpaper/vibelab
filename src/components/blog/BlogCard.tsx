@@ -1,5 +1,6 @@
 import type { BlogPost } from "@/lib/mdx";
 import { GlassCard } from "@/components/shared/GlassCard";
+import Image from "next/image";
 
 interface BlogCardProps {
   post: BlogPost;
@@ -17,11 +18,13 @@ export function BlogCard({ post, href, publishedLabel }: BlogCardProps) {
     <a href={href} className="block group">
       <GlassCard className="p-6 transition-all duration-300 group-hover:scale-[1.01] group-hover:bg-[var(--glass-bg-hover)]">
         {post.frontmatter.cover && (
-          <div className="mb-4 overflow-hidden rounded-lg">
-            <img
+          <div className="relative mb-4 h-48 overflow-hidden rounded-lg">
+            <Image
               src={post.frontmatter.cover}
               alt={post.frontmatter.title}
-              className="h-48 w-full object-cover transition-transform duration-300 group-hover:scale-105"
+              fill
+              sizes="(min-width: 1024px) 320px, 100vw"
+              className="object-cover transition-transform duration-300 group-hover:scale-105"
             />
           </div>
         )}

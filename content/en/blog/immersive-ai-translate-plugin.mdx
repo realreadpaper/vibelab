@@ -1,0 +1,173 @@
+---
+title: "How I Built an Immersive AI Translation Extension with Codex"
+date: "2026-05-06"
+excerpt: "From web-page translation to PDF and YouTube subtitles, this is how I used Codex to turn a Chrome MV3 extension into stable segment, provider, target, and renderer pipelines."
+tags: ["codex", "browser-extension", "translation", "deepseek", "vibe-coding"]
+---
+
+## Background
+
+I did not want a tiny tool that sends selected text to a model. I wanted a browser extension for real reading: open an article, click a floating button, get translations inserted back into the page, then switch between bilingual, source-only, and translation-only modes without calling the model again.
+
+That became `Immersive AI Translate`, a Chrome / Edge Manifest V3 extension. The stable path is web-page translation. The experimental paths cover a PDF text-layer workspace and a YouTube subtitle overlay.
+
+This post is not a feature tour. It is a build log about how I used Codex to make the system hold together.
+
+## I Did Not Ask Codex to Code First
+
+My first prompt was not “build a translation extension.” That usually produces a demo content script that works once and becomes painful immediately.
+
+I asked Codex to define the design boundary first:
+
+```text
+Design a Chrome MV3 immersive web-page translation extension.
+Requirements:
+- Do not destroy the original page DOM
+- Translations must map back to their source segments
+- Support bilingual, source-only, and translation-only modes
+- Providers are replaceable, default DeepSeek, also support OpenAI-compatible APIs
+- API keys stay in browser local storage
+- First write module boundaries, message protocol, and testing strategy
+- Do not implement code yet
+```
+
+The important words were not “translation.” They were the constraints: preserve the DOM, map results reliably, keep providers replaceable, and design before implementing. Codex’s first useful output split the system into `popup`, `options`, `background`, `content`, `storage`, and `shared`, which matches how browser extensions actually run.
+
+## Main Line 1: Segments, Not Full HTML
+
+The tempting shortcut is to send an entire page’s `innerHTML` to a model and put the result back. That is fast for a demo and terrible for real pages. It breaks events, styles, scripts, and state.
+
+I pushed Codex toward a text-block model:
+
+1. The content script uses a DOM TreeWalker to find visible text nodes.
+2. It skips `script`, `style`, `code`, `pre`, inputs, hidden nodes, and extension controls.
+3. It merges text into stable segments.
+4. It writes `data-segment-id` onto the source DOM nodes.
+5. When translations return, it inserts nodes keyed by `data-translation-for`.
+
+The extension does not try to own the whole page. It only owns the translation nodes it inserts. Display modes become simple: show or hide source nodes and translation nodes.
+
+That design also enables progressive translation. The floating button translates content near the current viewport first. As the user scrolls, newly visible segments are translated in small batches. The default batch size is six segments, which reduces latency and lowers the chance of malformed model output.
+
+## Main Line 2: Providers Only Translate
+
+I did not want DeepSeek, OpenAI-compatible APIs, or traditional translation services leaking into DOM and UI code. So a provider adapter only owns four responsibilities:
+
+- `validateConfig()`
+- `translateSegments()`
+- `normalizeError()`
+- `getMeta()`
+
+The background service worker reads settings, validates configuration, chunks requests, calls the provider, and sends results back to the content script. Providers only build requests and parse responses.
+
+The model prompt is written as an interface contract:
+
+```text
+You are a professional translation engine for immersive bilingual reading.
+Return only one valid JSON object:
+{"segments":[{"id":"same id","translatedText":"translation"}]}
+Copy each input id byte-for-byte.
+Do not return markdown fences, explanations, notes, or extra text.
+```
+
+Translation quality matters, but an extension fails harder when translated text cannot be mapped back to the page. That is why the prompt repeatedly says: do not rewrite ids, do not omit segments, do not output anything else.
+
+Even then, real models return odd formats: Markdown `json` fences, top-level arrays, `translations` fields, or JSON-like text with missing quotes. So Codex added `parseTranslatedSegments`: parse the expected JSON first, then strip fences, accept common alternate shapes, and recover by source segment order when the output is still usable.
+
+The lesson: prompts stabilize the happy path; parsers keep the unhappy path from breaking the page.
+
+## Main Line 3: Targets, Not Endless Special Cases
+
+Once web-page translation worked, I started adding PDF and YouTube support. This is where content scripts often turn into a wall of `if youtube else if pdf else html`.
+
+I changed the prompt:
+
+```text
+Upgrade the existing page translation into a translation target architecture.
+Target types:
+- html-page
+- pdf-document
+- youtube-subtitles
+
+Requirements:
+- Reuse provider batch translation
+- Do not mix YouTube/PDF logic into dom-extractor
+- Each target has its own collector and renderer
+- Anchors can represent DOM nodes, PDF blocks, and subtitle cues
+```
+
+That moved the project from “web-page translation extension” to “multi-target translation task system.”
+
+The PDF boundary is intentionally narrow: only independent PDF documents, opened in the extension’s own PDF translation workspace, with text-layer extraction first. OCR remains a reserved fallback instead of a fake promise.
+
+The YouTube boundary is similarly strict: use existing timedtext subtitle tracks first, translate cues, and let an overlay render by video time. Only videos without usable captions enter the experimental ASR path, and that path must not slow down videos that already have captions.
+
+## Why PDF and YouTube Need Different Prompts
+
+PDF text is not normal web text. It has page order, coordinates, formulas, citations, references, headings, author lists, and captions. The PDF prompt therefore says to preserve formulas, variables, dataset names, section numbers, bibliography markers, URLs, DOIs, and reference-list entries.
+
+YouTube subtitles have the opposite pressure. They need to be concise and readable on screen. The subtitle prompt treats input as timed speech and asks for natural, compact translation.
+
+Same provider, different `contentKind`, different system prompt. That was more effective than trying to tune the model from outside.
+
+## Ad Cleaning Turned Out to Matter
+
+The hardest part of real pages is not always the article. It is ads, sponsor cards, recommendations, and dynamic blocks that pollute the translation request.
+
+The content script now runs an ad cleaner before translation:
+
+- Once when the page opens.
+- Again when the floating button is clicked.
+- Again for automatic translation and popup-triggered translation.
+- Continuously for dynamically inserted ad-like nodes.
+
+This is not meant to be an ad blocker. It is a way to make the translation set closer to what the user actually wants to read.
+
+## Keeping Tests Close to the Boundaries
+
+The project stayed movable because the tests protect the boundaries:
+
+- `dom-extractor` tests segment order, skip rules, and site-specific fallbacks.
+- `segment-renderer` tests the three display modes.
+- Provider tests cover JSON contracts, malformed responses, and error normalization.
+- PDF tests cover text blocks, cache behavior, and workspace params.
+- YouTube tests cover subtitle tracks, overlays, prefetch queues, and ASR sessions.
+- Playwright covers extension E2E, with an explicit DeepSeek smoke path for real-network validation.
+
+My implementation prompts usually include verification commands:
+
+```text
+First add Vitest coverage:
+- provider returns Markdown json fence
+- provider returns {segments:[...]}
+- ids are missing but order matches sourceSegments
+Then implement the smallest parser change.
+Run the specific test file.
+Do not change unrelated modules.
+```
+
+That prevents “make it more robust” from turning into a provider-layer rewrite.
+
+## Current State
+
+The stable capability is still `html-page` translation. PDF and YouTube are experimental but wired:
+
+- PDF: an extension workspace for documents with extractable text layers; OCR is a reserved fallback.
+- YouTube: timedtext subtitle tracks can be translated into an overlay; no-caption ASR remains experimental.
+- Providers: DeepSeek defaults, OpenAI-compatible APIs, custom Base URL, and a traditional provider.
+- Reading modes: bilingual, source-only, translation-only.
+- Entry points: viewport-first floating button and full-page popup action.
+
+## Takeaway
+
+The biggest lesson was that AI writes code quickly, but boundaries make the project grow.
+
+For this extension, the important boundaries are:
+
+- `segment` is the smallest stable translation unit.
+- `provider` never touches the DOM.
+- `target` keeps PDF and YouTube out of the web-page path.
+- `renderer` only places results back in the right location.
+- Prompting is part of the interface contract, not just a quality knob.
+
+Codex was most useful when I used it to turn each boundary into code, tests, and documentation. It brought speed; I kept the direction.

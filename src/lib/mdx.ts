@@ -42,8 +42,7 @@ export interface Project {
  * Handles the case where the directory may not exist yet.
  */
 function readMdxFiles<T>(
-  dirPath: string,
-  locale: string
+  dirPath: string
 ): { slug: string; frontmatter: T; content: string }[] {
   if (!fs.existsSync(dirPath)) return [];
 
@@ -66,7 +65,7 @@ function readMdxFiles<T>(
 /** Get all blog posts for a given locale, sorted by date descending. */
 export function getAllPosts(locale: string): BlogPost[] {
   const dirPath = path.join(CONTENT_ROOT, locale, "blog");
-  const items = readMdxFiles<BlogFrontmatter>(dirPath, locale);
+  const items = readMdxFiles<BlogFrontmatter>(dirPath);
 
   return items
     .map((item) => ({
@@ -99,7 +98,7 @@ export function getPost(slug: string, locale: string): BlogPost | null {
 /** Get all projects for a locale, sorted by order field. */
 export function getAllProjects(locale: string): Project[] {
   const dirPath = path.join(CONTENT_ROOT, locale, "projects");
-  const items = readMdxFiles<ProjectFrontmatter>(dirPath, locale);
+  const items = readMdxFiles<ProjectFrontmatter>(dirPath);
 
   return items
     .map((item) => ({

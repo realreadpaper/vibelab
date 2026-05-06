@@ -1,0 +1,299 @@
+---
+title: "我是如何让 Code-OSS 通过 SSH 支持远端 AI 工作区的"
+date: "2026-05-06"
+excerpt: "为了让 Codex 真正在远程目录里读写、搜索和执行命令，我 fork Code-OSS，自研 Remote-SSH resolver、Remote Server 分发和远程 AI bridge。"
+tags: ["code-oss", "remote-ssh", "codex", "ai-agent", "vibe-coding"]
+---
+
+## 目标
+
+我想要的不是一个 SFTP 文件浏览器，也不是“本地打开一个远程目录镜像”。目标更直接：
+
+```text
+本地安装 Codex VS Code 扩展
+SSH 连接远程开发机
+打开远程目录作为工作区
+Codex/AI 能直接操作远程目录
+终端、搜索、Git、LSP、Debug 都贴着远程文件系统运行
+```
+
+也就是说，用户看到的是一个本地桌面 IDE，但真正的 workspace 在远端。AI 读文件、改文件、跑测试时，路径、进程、工具链都必须是远程的。
+
+这篇讲我怎么用 Codex 和本地技术文档，把这件事从“看起来像远程”推进到“语义上就是远程”。
+
+## 一开始的误判：做个 SSH 文件编辑器就够了吗
+
+最朴素的方案是：
+
+1. SSH 连接机器。
+2. 列远程目录。
+3. 读文件到本地编辑器。
+4. 保存时再写回去。
+5. 命令通过 SSH 执行。
+
+这对普通文本编辑器也许够用，但对 Codex 不够。Codex VS Code 扩展不是一个简单的 CLI wrapper，它依赖大量 VS Code 能力：
+
+- `workspace.workspaceFolders`
+- `workspace.fs`
+- `commands.registerCommand`
+- Webview / sidebar / custom editor
+- diagnostics / references / workspace symbols
+- terminal
+- Chat Sessions proposed API
+- LSP MCP 相关能力
+
+如果只做 SFTP，Codex 看到的仍然可能是本地 file workspace、虚拟 URI、或者不完整的 VS Code API。它能显示 UI，不代表它能在正确的目录里工作。
+
+我让 Codex 做的第一件事是“证明复杂度”：
+
+```text
+不要写代码。
+分析 OpenAI Codex VS Code extension 需要哪些 VS Code API。
+判断如果从零实现一个远程 IDE，需要补哪些平台能力。
+输出结论：哪些必须复用 Code-OSS，哪些可以自研。
+```
+
+这个 prompt 直接改变了方案方向：不要重新实现插件运行时，应该 fork Code-OSS。
+
+## 为什么必须 fork Code-OSS
+
+Code-OSS 已经提供了我最不应该重写的部分：
+
+- Workbench
+- Extension Host
+- FileService
+- Webview
+- Commands / Menus / Context keys
+- Text model
+- Terminal / PTY
+- Search / ripgrep
+- Git
+- LSP / DAP
+- Remote Agent 协议
+
+真正要自研的是产品层和远程接入层：
+
+- Remote-SSH resolver
+- `ssh-remote+host` remote authority
+- Remote Server bootstrap
+- Server tarball packaging
+- SSH tunnel / local forwarding
+- AI remote bridge
+- Approval UI
+- Workspace sandbox
+- Codex compatibility policy
+
+换句话说，这不是“从零写一个 IDE”，而是“复用 Code-OSS 作为 IDE 平台，然后补齐 Remote-SSH 和 AI 远端执行能力”。
+
+## Remote-SSH 的骨架
+
+最终的架构是这样的：
+
+```text
+Local Code-OSS fork
+  -> our.remote-ssh resolver
+  -> ssh-remote+dev
+  -> SSH tunnel
+  -> remote-ai-server
+  -> Remote Agent
+  -> Remote Extension Host
+  -> remote FileService / Terminal / Search / Git / LSP
+```
+
+远程目录不是本地路径，而是：
+
+```text
+vscode-remote://ssh-remote+dev/home/user/project
+```
+
+本地 Workbench 只负责 UI。真正的文件系统、终端、搜索、Git 和 language server 都在远程 Extension Host 和 Remote Agent 后面。
+
+我给 Codex 的实现提示词很明确：
+
+```text
+实现一个 Code-OSS Remote-SSH fork。
+不要复制 Microsoft ms-vscode-remote.remote-ssh 闭源扩展代码。
+复用 Code-OSS Remote Authority Resolver 和 Remote Agent 协议。
+自研：
+- SSH host 选择
+- remote server 安装
+- server tarball 校验
+- local port forwarding
+- ResolvedAuthority 返回
+- 诊断报告
+每一步先写测试或验证脚本。
+```
+
+这个 prompt 的重点是两个边界：不复制闭源 Remote-SSH；不重写 Code-OSS 已有远程栈。
+
+## Remote Server 分发和 CentOS 7 兼容
+
+远程 server 的启动形态类似：
+
+```text
+~/.remote-ai-server/bin/<commit>/
+  bin/remote-ai-server
+  node
+  out/server-main.js
+  product.json
+  extensions/
+```
+
+本地 resolver 通过 SSH 安装 tarball，启动 `bin/remote-ai-server`，建立本地端口转发，然后把 authority 交回 Code-OSS。
+
+这里有一个很现实的坑：企业 Linux 机器可能还在 CentOS 7，`glibc` 只有 2.17。很多检查脚本会保守要求 `glibc >= 2.28`，但真实二进制 ABI 未必需要那么高。
+
+所以我没有让 Codex 简单照搬检查脚本，而是让它做 release gate：
+
+```text
+写 remote server packaging 和 releaseDoctor。
+要求：
+- manifest 记录 sha256、size、min glibc
+- tarball 必须包含 node、bin/remote-ai-server、out/server-main.js、product.json
+- 可 overlay 兼容的 Linux Node 和 native .node
+- 禁止 macOS AppleDouble 元数据进入 tarball
+- 支持 ssh dev 上的 glibc 2.17 验证
+```
+
+这让“能启动”变成了可检查的发布条件，而不是手工运气。
+
+## Codex 最大的问题：它到底运行在哪里
+
+完整 Remote-SSH 下，Codex 有三类能力：
+
+```text
+UI:
+  sidebar / webview / custom editor / commands
+
+Workspace:
+  workspaceFolders / file references / diagnostics / symbols
+
+Agent execution:
+  codex CLI / shell / git / rg / file patch
+```
+
+这三类能力不一定适合放在同一个地方。
+
+本地 UI 当然应该在本地跑，用户需要 sidebar 和 webview。但 agent execution 必须在远程跑。否则 Codex 改的是本地目录，跑的是本地 shell，读到的是本地 `rg` 结果。
+
+还有一个平台问题：本地安装的 Codex 扩展可能带的是 macOS CLI，不能直接上传到 Linux 远端执行。
+
+所以我做了 `ai-codex-remote-bridge`。
+
+## ai-codex-remote-bridge
+
+这个 bridge 是一个 workspace extension，运行在远程 Extension Host。它负责：
+
+1. 判断当前是否 `ssh-remote` workspace。
+2. 检测 `openai.chatgpt` 扩展。
+3. 在远程侧准备 Linux 版 Codex CLI。
+4. 把 `chatgpt.cliExecutable` 指向受控 wrapper。
+5. 同步必要的 `~/.codex/auth.json` 和 `config.toml`。
+6. 给远程执行设置正确的 `cwd`、环境变量和 workspace root。
+7. 把审批请求转发到本地 UI。
+
+平台选择被写成硬约束：
+
+```text
+Remote Codex CLI must be Linux.
+linux-x64 -> codex-linux-x64.tar.gz
+linux-arm64 -> codex-linux-arm64.tar.gz
+darwin-* -> reject
+```
+
+这看起来小，但很重要。远程 AI 的第一原则是：不要让“看起来远程”的任务偷偷落回本地。
+
+## 审批和 sandbox 不能只在 UI 做
+
+AI 能在远程执行命令，安全模型就必须前置。
+
+默认策略是：
+
+```text
+read/list/search/git status: allow
+write/applyPatch/delete: diff approval
+exec: command approval
+network command: elevated approval
+sudo/root/system path: deny by default
+outside workspace root: deny unless explicitly allowed
+```
+
+本地 UI 会弹审批，但真正的 path 校验不能只放在本地。远程 bridge 也必须做 workspace sandbox：
+
+```text
+workspace root realpath = /home/user/project
+candidate path -> clean -> resolve symlink -> verify startsWith(root)
+```
+
+我让 Codex 先写这类测试：
+
+```text
+workspace sandbox:
+- /home/user/project/src/a.ts allowed
+- /home/user/project2/a.ts blocked
+- /home/user/project/../.ssh/id_rsa blocked after normalization
+```
+
+这种测试很朴素，但能防止最危险的“路径字符串看起来像在 workspace 里”的错觉。
+
+## 把原生 Chat UI 关掉，而不是删掉世界
+
+Code-OSS 自带 Chat / Inline Chat / Quick Chat 等入口。但这个 fork 的目标是 RemoteAI + Codex，不是再暴露一套原生 Chat UI。
+
+我选择的是禁用产品级入口，而不是删除源码树：
+
+- 隐藏 Workbench Chat、Inline Chat、Quick Chat。
+- 去掉命令面板里的原生 Chat picks。
+- 保留必要的 chat-shaped types 和 DI service，避免第三方扩展或 proposed API 兼容性断裂。
+- `product.json` 仍保留 `openai.chatgpt` 需要的 proposed API entries。
+
+这类改动很适合交给 Codex 做“收敛式搜索”：搜索注册点、关入口、跑编译、再搜索残余 UI affordance。
+
+## 验证证据
+
+我不想只停留在“理论上应该能跑”。项目里最后沉淀了几层验证：
+
+- `releaseDoctor` 检查 tarball 和 manifest。
+- Gulp 编译 `our-remote-ssh`、`ai-codex-remote-bridge`、`ai-approval-ui`。
+- Mocha 覆盖 remote-ai packaging、SSH resolver、bridge、workspace sandbox。
+- `ssh dev` 验证远程安装、启动、隧道和 glibc 2.17。
+- GUI 手工验证 RemoteAI dashboard、远程目录选择、Explorer、终端、文件保存。
+- Codex 绑定状态验证：远程 workspace 中不允许静默 fallback 到本地 `codex`。
+
+验证文档里记录过一次新鲜结果：`ssh dev` 上 remote server 安装到了 `~/.remote-ai-server/bin/<commit>`，bundled Node 是 `v20.18.2`，远程 `glibc` 是 2.17，bridge 扩展存在，audit hash-chain 记录了 bootstrap、install、launch 和 tunnel。
+
+这些证据比“我觉得架构对了”更可靠。
+
+## 我对 Codex 的使用方式
+
+这个项目里，Codex 最有价值的不是“帮我打字”，而是帮我在大代码库里做三件事：
+
+1. 证据收集：找 Code-OSS 里 remote authority、server-main、extensionKind、chat contribution 的真实注册点。
+2. 计划拆分：把 Remote-SSH、server packaging、Codex bridge、approval、CentOS gate 拆成可验证任务。
+3. 收敛实现：每次只改一个边界，配测试或验证脚本。
+
+我反复使用的 prompt 模式是：
+
+```text
+先搜索并列出证据，不要改代码。
+基于证据给出 2-3 个方案，说明为什么推荐其中一个。
+然后只实现推荐方案的最小闭环。
+写测试或验证脚本。
+不要重构无关模块，不要删除兼容层。
+```
+
+这套 prompt 对大项目特别有用，因为它让 Codex 先成为调查员，再成为工程师。
+
+## 收获
+
+RemoteAI 的核心不是“会 SSH”，而是让 IDE 和 AI 都拥有正确的远程语义。
+
+最终我保留下来的判断是：
+
+- 文件同步不是 Remote-SSH。
+- 虚拟 URI 不是完整 workspace。
+- Codex UI 在本地不等于 Codex execution 在本地。
+- 远程 AI 必须有平台正确的 CLI、远程 cwd、远程工具链和审批链路。
+- fork Code-OSS 的意义，是复用 IDE 平台，而不是重新造一个插件运行时。
+
+这件事的复杂度很高，但方向其实很简单：让每个动作发生在它该发生的机器上。UI 在本地，workspace 在远程，AI 执行也在远程。中间所有 bridge、resolver、server packaging 和 sandbox，都是为了守住这条线。

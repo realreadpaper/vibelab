@@ -1,4 +1,5 @@
 import { useTranslations } from "next-intl";
+import NextLink from "next/link";
 import { Link } from "@/i18n/navigation";
 
 export function Footer() {
@@ -18,12 +19,12 @@ export function Footer() {
           <span>{t("builtWith")}</span>
         </div>
         <div className="flex items-center gap-4">
-          <a
+          <NextLink
             href="/feed"
             className="transition-colors hover:text-[var(--text-secondary)]"
           >
             {t("rss")}
-          </a>
+          </NextLink>
           <a
             href="https://github.com"
             target="_blank"

@@ -1,0 +1,177 @@
+---
+title: "我是如何用 Codex 做出一个沉浸式 AI 自动翻译插件的"
+date: "2026-05-06"
+excerpt: "从网页正文翻译到 PDF 和 YouTube 字幕，我用 Codex 把一个 Chrome MV3 扩展拆成 segment、provider、target 和 renderer 四条稳定链路。"
+tags: ["codex", "browser-extension", "translation", "deepseek", "vibe-coding"]
+---
+
+## 背景
+
+我想做的不是一个“把选中文本发给模型”的小工具，而是一个能长期阅读的浏览器翻译插件：打开外文网页，点一下页面里的悬浮球，译文直接回到原页面；想看双语就双语，想只看译文就只看译文，而且不需要重新请求模型。
+
+后来这个项目变成了 `Immersive AI Translate`：一个面向 Chrome / Edge 的 Manifest V3 扩展。稳定链路是普通网页正文翻译，实验链路扩展到了 PDF 文本层翻译工作台和 YouTube 字幕 overlay。
+
+这篇不是功能介绍，而是复盘我怎么用 Codex 把它做出来。
+
+## 我先让 Codex 做的不是写代码
+
+一开始我没有直接说“帮我写一个翻译插件”。这种 prompt 太容易得到一个能跑 demo、但无法维护的 content script。
+
+我先让 Codex 产出设计边界：
+
+```text
+设计一个 Chrome MV3 沉浸式网页翻译扩展。
+要求：
+- 不破坏原网页 DOM 结构
+- 译文必须能按段落回填
+- 支持双语、仅原文、仅译文三种模式
+- Provider 可替换，默认 DeepSeek，同时支持 OpenAI-compatible
+- API Key 保存在浏览器本地
+- 先写清楚模块边界、消息协议和测试策略，不要直接实现
+```
+
+这个 prompt 的关键不是“翻译”，而是四个约束：不破坏 DOM、稳定回填、provider 可替换、先设计再实现。Codex 给出的第一版方案把系统拆成了 `popup`、`options`、`background`、`content`、`storage` 和 `shared`，这正好贴合浏览器扩展的真实运行边界。
+
+## 第一条主线：segment，而不是整页 HTML
+
+网页翻译最容易走偏的地方，是把整页 `innerHTML` 丢给模型，然后把结果塞回去。那样看起来快，但会破坏事件、样式、脚本和页面状态。
+
+我让 Codex 按“文本块”思路实现：
+
+1. Content script 用 DOM TreeWalker 找可见文本节点。
+2. 跳过 `script`、`style`、`code`、`pre`、输入框和隐藏节点。
+3. 把文本归并成稳定的 segment。
+4. 给真实 DOM 节点写入 `data-segment-id`。
+5. 翻译结果回来后，用 `data-translation-for` 插到原文旁边。
+
+这样插件不会试图拥有整个页面，只拥有自己插入的译文节点。模式切换也变简单了：双语、仅原文、仅译文，本质上就是切换原文节点和译文节点的显示状态。
+
+这个设计还有一个副作用：它天然适合渐进式翻译。悬浮球点击后先翻译当前视口附近内容，用户滚动时再翻译后续段落。单批默认控制在 6 段，既降低等待时间，也降低模型返回结构乱掉的概率。
+
+## 第二条主线：Provider 只负责翻译
+
+我不想让 DeepSeek、OpenAI-compatible、传统翻译服务的细节污染 DOM 和 UI，所以 provider adapter 只做四件事：
+
+- `validateConfig()`
+- `translateSegments()`
+- `normalizeError()`
+- `getMeta()`
+
+Background service worker 负责读取设置、拆批、调用 provider、把结果发回 content script。Provider 自己只关心请求构造和响应解析。
+
+模型提示词也被写成一个明确的 contract：
+
+```text
+You are a professional translation engine for immersive bilingual reading.
+Return only one valid JSON object:
+{"segments":[{"id":"same id","translatedText":"translation"}]}
+Copy each input id byte-for-byte.
+Do not return markdown fences, explanations, notes, or extra text.
+```
+
+这段提示词看起来很硬，但对插件非常重要。翻译质量当然重要，可浏览器扩展更怕的是“翻译回来了但无法对齐”。所以 prompt 里反复强调 id 不能改、不能漏、不能额外输出。
+
+即便如此，真实模型仍然会返回各种奇怪格式：Markdown `json` 代码块、顶层数组、`translations` 字段、甚至漏引号的 JSON-like 文本。于是我让 Codex 补了一层 `parseTranslatedSegments` 容错解析：优先解析标准 JSON，失败后尝试剥离代码块、识别常见字段名，再按源 segment 顺序恢复。
+
+这里的经验是：prompt 约束负责让正常路径稳定，解析容错负责让异常路径不炸整页。
+
+## 第三条主线：目标检测，而不是无限堆特判
+
+普通网页翻译跑通后，我开始加 PDF 和 YouTube。这个阶段最容易把 content script 写成一坨 `if youtube else if pdf else html`。
+
+我给 Codex 的提示词改成了“统一翻译目标”：
+
+```text
+把现有网页翻译升级为 translation target 架构。
+目标类型：
+- html-page
+- pdf-document
+- youtube-subtitles
+
+要求：
+- Provider 批量翻译逻辑复用
+- 不把 YouTube/PDF 特判混进 dom-extractor
+- 每种 target 有自己的 collector 和 renderer
+- anchor 能表达 DOM、PDF block、subtitle cue 的定位信息
+```
+
+这一步把系统从“网页翻译插件”推成了“多目标翻译任务系统”。
+
+PDF 的边界被定得很窄：只处理独立 PDF 文档，打开扩展自己的 PDF 翻译工作台，优先读取文本层。扫描版 PDF 的 OCR 兜底先保留入口，不假装已经稳定。
+
+YouTube 的边界也很清楚：优先读取已有 timedtext 字幕轨道，翻译完整 cue，再由 overlay 根据播放器当前时间显示。没有字幕时才进入 ASR 实验路径，而且 ASR 不阻塞有字幕视频。
+
+这个选择让系统没有为了“支持更多场景”牺牲主链路稳定性。
+
+## PDF 和 YouTube 为什么单独讲
+
+PDF 不是网页。它的文字顺序、页内坐标、引用、公式、参考文献都和普通 DOM 不一样。所以 PDF prompt 里要额外要求：
+
+- 保留公式、引用、变量名、数据集名、章节号。
+- 参考文献条目不要翻译。
+- 标题、图注、作者、机构只能翻译自然语言部分。
+
+YouTube 也不是网页。字幕要短、要自然、要适合屏幕显示。它的 prompt 不是“出版级翻译”，而是“timed subtitle text”，强调简洁和口语自然。
+
+同一个 provider，不同 `contentKind`，不同系统提示词。这比在模型外面硬调参数更有效。
+
+## 广告清理是一个意外但必要的步骤
+
+真实网页里最烦人的不是正文，而是广告、赞助卡片、动态插入的推荐模块。它们会污染翻译请求，也会让双语阅读变得很吵。
+
+所以 content script 会在翻译前运行广告清理器：
+
+- 页面打开后先清理一次。
+- 用户点击悬浮球时再清理一次。
+- 自动翻译和 popup 手动翻译也都会先清理。
+- 动态插入的广告通过监听继续隐藏。
+
+这不是为了做广告拦截器，而是为了让“待翻译文本集合”更接近用户真正想读的内容。
+
+## 测试怎么跟上
+
+这个项目能继续加功能，主要靠测试把边界钉住：
+
+- `dom-extractor` 测试 segment 顺序、跳过规则和站点兜底。
+- `segment-renderer` 测试三种显示模式。
+- Provider 测试 JSON contract、异常响应和错误归一化。
+- PDF 测试文本块解析、缓存和工作台参数。
+- YouTube 测试字幕轨道、overlay、预取队列和 ASR session。
+- Playwright 做扩展 E2E，另有显式开启的 DeepSeek 联机冒烟测试。
+
+我给 Codex 的实现 prompt 通常会带上验证命令，而不是只说“写测试”：
+
+```text
+先补 Vitest 覆盖：
+- provider 返回 Markdown json fence 时能解析
+- provider 返回 {segments:[...]} 时能解析
+- id 缺失但顺序一致时能按 sourceSegments 恢复
+然后实现最小解析逻辑。
+最后运行对应 test 文件，不要改无关模块。
+```
+
+这种 prompt 的好处是，Codex 不会把“我要更健壮”理解成重构半个 provider 层。
+
+## 现在的状态
+
+当前稳定能力仍然是 `html-page` 网页翻译。PDF 和 YouTube 已经有实验链路：
+
+- PDF：独立工作台，可翻译可提取文本层的文档，OCR 兜底保留入口。
+- YouTube：已有字幕轨道的视频可渲染翻译 overlay，无字幕 ASR 路径还在实验中。
+- Provider：DeepSeek 默认配置、OpenAI-compatible、自定义 Base URL 和传统 provider。
+- 阅读模式：双语、仅原文、仅译文。
+- 翻译入口：悬浮球视口优先翻译，popup 保留全页手动入口。
+
+## 收获
+
+这次最大的收获是：AI 写代码很快，但真正让项目长出来的是边界。
+
+对翻译插件来说，关键边界是：
+
+- `segment` 是翻译的最小稳定单位。
+- `provider` 不碰 DOM。
+- `target` 不污染普通网页链路。
+- `renderer` 只负责把结果放回正确位置。
+- prompt 是接口契约的一部分，不只是“让模型翻译得好一点”。
+
+Codex 最适合的角色不是一次性生成整个扩展，而是陪我把每条边界写成代码、测试和文档。它负责速度，我负责方向；它负责铺路，我负责决定路该通到哪里。
