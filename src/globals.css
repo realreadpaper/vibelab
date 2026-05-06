@@ -148,6 +148,22 @@ body {
 .prose a {
   color: var(--accent-from);
 }
+.prose blockquote {
+  margin: 1.5rem 0 2rem;
+  border: 1px solid var(--glass-border);
+  border-left: 4px solid var(--accent-from);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1rem 1.15rem;
+  color: var(--text-primary);
+  font-style: normal;
+}
+.prose blockquote p {
+  margin: 0;
+}
+.prose blockquote a {
+  font-weight: 700;
+}
 .prose code {
   color: var(--accent-to);
   border: 1px solid var(--glass-border);
