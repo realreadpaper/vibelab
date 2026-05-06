@@ -16,7 +16,7 @@ export async function GET() {
     updated: new Date(),
     author: {
       name: "Long Jiang",
-      email: "hello@jianglong.dev",
+      email: "realreadpaper@163.com",
     },
   });
 

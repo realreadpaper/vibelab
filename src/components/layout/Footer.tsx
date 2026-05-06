@@ -26,7 +26,7 @@ export function Footer() {
             {t("rss")}
           </NextLink>
           <a
-            href="https://github.com"
+            href="https://github.com/realreadpaper"
             target="_blank"
             rel="noopener noreferrer"
             className="transition-colors hover:text-[var(--text-secondary)]"

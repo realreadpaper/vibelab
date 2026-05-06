@@ -5,33 +5,54 @@ excerpt: "To make Codex read, write, search, and run commands in a real remote d
 tags: ["code-oss", "remote-ssh", "codex", "ai-agent", "vibe-coding"]
 ---
 
-## Goal
+## The Short Version
 
-I did not want an SFTP file browser. I also did not want a local mirror that merely looks remote. The target was sharper:
+I was not building an SSH file editor. I wanted an AI development environment with correct remote semantics:
 
 ```text
-Install the Codex VS Code extension locally
-Connect to a remote development machine over SSH
-Open a remote directory as the workspace
-Let Codex/AI operate directly on that remote directory
-Run terminal, search, Git, LSP, and debug against the remote filesystem
+local desktop IDE
+  -> SSH into a remote development machine
+  -> open a remote directory as the workspace
+  -> let Codex read, write, search, and execute there
+  -> terminal, Git, Search, LSP, and Debug all run against the remote filesystem
 ```
 
-The user should see a local desktop IDE, but the workspace must be remote. When AI reads files, edits files, runs tests, or invokes tools, the path, process, and toolchain must all be remote.
+SFTP and local mirrors are not enough for that. The final solution is a Code-OSS fork: reuse Workbench, Extension Host, Remote Agent, FileService, Terminal, Search, Git, LSP/DAP, then build the Remote-SSH product layer and AI remote execution layer ourselves.
 
-This post is about how I used Codex and local technical docs to move the system from “looks remote” to “is remote semantically.”
+One-line summary:
 
-## The First Wrong Idea: Is an SSH Editor Enough?
+```text
+Reuse Code-OSS as the IDE platform.
+Build Remote-SSH resolver, remote-ai-server, Codex remote bridge, approval, and sandbox.
+```
 
-The obvious approach is:
+## Reading Path
 
-1. Connect over SSH.
-2. List remote folders.
-3. Read files into a local editor.
-4. Write files back on save.
-5. Execute commands through SSH.
+This post follows the decision chain:
 
-That may be enough for a text editor. It is not enough for Codex. The Codex VS Code extension is not a simple CLI wrapper. It depends on a large part of the VS Code platform:
+1. Why SFTP/local mirrors are not enough.
+2. Why Code-OSS has to be the base.
+3. How the Remote-SSH loop works.
+4. How the remote server is packaged and verified.
+5. The hardest Codex question: where does UI run, and where does execution run?
+6. How `ai-codex-remote-bridge` moves execution to the remote host.
+7. How approval, sandboxing, and verification close the loop.
+
+## 1. The Goal Is Remote Semantics, Not SSH
+
+The simplest idea is an SSH editor:
+
+```text
+ssh list files
+  -> read remote file
+  -> edit locally
+  -> save back over ssh
+  -> run commands over ssh
+```
+
+That may be enough for a plain editor. It is not enough for Codex.
+
+The Codex VS Code extension is not a simple CLI wrapper. It depends on VS Code platform capabilities:
 
 - `workspace.workspaceFolders`
 - `workspace.fs`
@@ -42,20 +63,24 @@ That may be enough for a text editor. It is not enough for Codex. The Codex VS C
 - Chat Sessions proposed API
 - LSP MCP capabilities
 
-If the product is only SFTP-shaped, Codex may still see a local file workspace, a virtual URI scheme, or an incomplete VS Code API surface. A sidebar opening successfully does not prove the agent is operating in the right place.
+With only SFTP, Codex may still see a local file workspace, a virtual URI scheme, or an incomplete VS Code API surface. A sidebar opening does not prove the agent is operating in the right directory.
 
-The first useful prompt I gave Codex was about proving complexity:
+The first key prompt was investigative:
 
 ```text
 Do not write code.
+
 Analyze which VS Code APIs the OpenAI Codex extension depends on.
 If we implemented a remote IDE from scratch, list the platform capabilities required.
-Conclude which parts must reuse Code-OSS and which parts can be built ourselves.
+Conclude:
+- which parts must reuse Code-OSS
+- which parts can be built ourselves
+- which closed-source implementations must not be copied
 ```
 
-That changed the project direction: do not rebuild the extension runtime. Fork Code-OSS.
+That moved the plan from “write a remote editor” to “fork Code-OSS.”
 
-## Why Fork Code-OSS
+## 2. Why Code-OSS
 
 Code-OSS already provides the parts I should not rewrite:
 
@@ -71,23 +96,34 @@ Code-OSS already provides the parts I should not rewrite:
 - LSP / DAP
 - Remote Agent protocol
 
-The custom work belongs in the product and remote-access layer:
+The custom layers are:
 
-- Remote-SSH resolver
-- `ssh-remote+host` remote authority
-- Remote Server bootstrap
-- Server tarball packaging
-- SSH tunnel / local forwarding
-- AI remote bridge
-- Approval UI
-- Workspace sandbox
-- Codex compatibility policy
+```text
+our.remote-ssh
+  -> SSH host selection
+  -> remote server installation
+  -> tunnel/local forwarding
+  -> ResolvedAuthority
+  -> diagnostics
 
-In other words: reuse Code-OSS as the IDE platform, then build the Remote-SSH and AI remote execution layer.
+remote-ai-server
+  -> server tarball
+  -> bootstrap
+  -> manifest/releaseDoctor
+  -> CentOS 7 ABI gate
 
-## The Remote-SSH Skeleton
+ai-codex-remote-bridge
+  -> remote Linux Codex CLI
+  -> remote cwd / env
+  -> approval
+  -> workspace sandbox
+```
 
-The final shape looks like this:
+The boundary matters: do not copy Microsoft `ms-vscode-remote.remote-ssh` closed-source code, and do not rebuild the remote stack Code-OSS already has.
+
+## 3. The Remote-SSH Skeleton
+
+The final path is:
 
 ```text
 Local Code-OSS fork
@@ -100,35 +136,34 @@ Local Code-OSS fork
   -> remote FileService / Terminal / Search / Git / LSP
 ```
 
-The remote folder is not a local path. It is:
+The remote workspace URI is not a local path:
 
 ```text
 vscode-remote://ssh-remote+dev/home/user/project
 ```
 
-The local Workbench renders UI. The actual filesystem, terminal, search, Git, and language servers sit behind the remote Extension Host and Remote Agent.
+The local Workbench renders UI. File access, terminal, search, Git, and language servers sit behind the remote Extension Host and Remote Agent.
 
-The implementation prompt was intentionally constrained:
+The implementation prompt was deliberately narrow:
 
 ```text
-Implement a Code-OSS Remote-SSH fork.
-Do not copy Microsoft ms-vscode-remote.remote-ssh closed-source extension code.
-Reuse Code-OSS Remote Authority Resolver and Remote Agent protocol.
-Build ourselves:
-- SSH host selection
-- remote server installation
-- server tarball verification
-- local port forwarding
-- ResolvedAuthority return
-- diagnostics report
-Add tests or verification scripts for each step.
+Implement the minimal Code-OSS Remote-SSH fork loop.
+
+Requirements:
+- Do not copy the closed-source Remote-SSH extension
+- Reuse Code-OSS Remote Authority Resolver
+- Install remote-ai-server over SSH
+- Open local port forwarding
+- Return ResolvedAuthority
+- Provide diagnostics
+- Add tests or verification scripts for each step
 ```
 
-The two boundaries matter: do not copy closed-source Remote-SSH code, and do not rewrite the remote stack Code-OSS already has.
+This kept Codex on the product layer instead of rebuilding the IDE.
 
-## Remote Server Distribution and CentOS 7
+## 4. Remote Server Distribution
 
-The remote server installation looks like:
+The remote installation looks like:
 
 ```text
 ~/.remote-ai-server/bin/<commit>/
@@ -139,14 +174,20 @@ The remote server installation looks like:
   extensions/
 ```
 
-The local resolver installs a tarball over SSH, starts `bin/remote-ai-server`, opens local port forwarding, and returns the resolved authority to Code-OSS.
+The local resolver does four things:
 
-There is a very real compatibility trap here: many enterprise Linux machines still run CentOS 7 with `glibc` 2.17. Conservative requirement scripts may ask for `glibc >= 2.28`, while the actual binary ABI can be lower.
+1. Check the remote environment over SSH.
+2. Install or reuse the server tarball for `<commit>`.
+3. Start `bin/remote-ai-server`.
+4. Open a local tunnel and return the authority to Code-OSS.
 
-So I did not ask Codex to blindly copy a requirement script. I asked for a release gate:
+There is a real compatibility trap here: many enterprise Linux machines still run CentOS 7 with `glibc` 2.17. Some requirement scripts conservatively ask for `glibc >= 2.28`, while the actual binary ABI can be lower.
+
+So I asked Codex for a release gate instead of blindly copying a requirement check:
 
 ```text
 Write remote server packaging and releaseDoctor.
+
 Requirements:
 - manifest records sha256, size, min glibc
 - tarball must contain node, bin/remote-ai-server, out/server-main.js, product.json
@@ -155,9 +196,9 @@ Requirements:
 - support validation on ssh dev with glibc 2.17
 ```
 
-That turned “it launches on my machine” into a checkable release condition.
+That turned “it launches” into a repeatable release condition.
 
-## The Hardest Codex Question: Where Does It Run?
+## 5. The Hardest Codex Question: Where Does It Run?
 
 In a full Remote-SSH workspace, Codex has three kinds of behavior:
 
@@ -172,40 +213,52 @@ Agent execution:
   codex CLI / shell / git / rg / file patch
 ```
 
-These do not all belong in the same place.
+These cannot be placed blindly in one process.
 
-The UI should run locally. The user needs the sidebar and webviews locally. But agent execution must run remotely. Otherwise Codex edits local files, runs a local shell, and reads local `rg` results.
+The UI should stay local because the user needs the sidebar, webviews, and commands locally. Agent execution must be remote. Otherwise Codex edits local files, runs a local shell, and searches with local `rg`.
 
-There is also a platform problem: the locally installed Codex extension may include a macOS CLI binary. That cannot be uploaded and executed on a Linux remote host.
+There is also a platform issue: the locally installed Codex extension may ship with a macOS CLI binary. That cannot run on a Linux remote host.
 
-That is why I built `ai-codex-remote-bridge`.
+That is why the system needs `ai-codex-remote-bridge`.
 
-## ai-codex-remote-bridge
+## 6. What ai-codex-remote-bridge Does
 
-The bridge is a workspace extension that runs in the remote Extension Host. It is responsible for:
+`ai-codex-remote-bridge` is a workspace extension running in the remote Extension Host.
+
+It is responsible for:
 
 1. Detecting whether the current workspace is `ssh-remote`.
 2. Detecting the `openai.chatgpt` extension.
-3. Preparing a Linux Codex CLI on the remote side.
+3. Preparing a Linux Codex CLI on the remote host.
 4. Pointing `chatgpt.cliExecutable` at a managed wrapper.
 5. Syncing the necessary `~/.codex/auth.json` and `config.toml`.
-6. Setting the correct `cwd`, environment, and workspace root for remote execution.
+6. Setting the remote `cwd`, environment, and workspace root.
 7. Forwarding approval requests back to local UI.
 
-Platform selection is a hard rule:
+Platform selection must be a hard rule:
 
 ```text
 Remote Codex CLI must be Linux.
-linux-x64 -> codex-linux-x64.tar.gz
+
+linux-x64   -> codex-linux-x64.tar.gz
 linux-arm64 -> codex-linux-arm64.tar.gz
-darwin-* -> reject
+darwin-*    -> reject
 ```
 
-It looks small, but it matters. The first rule of remote AI is: do not let a task that appears remote silently fall back to local execution.
+Remote execution also needs explicit environment:
 
-## Approval and Sandbox Cannot Live Only in UI
+```bash
+REMOTE_AI=1
+REMOTE_AI_AUTHORITY=ssh-remote+dev
+REMOTE_AI_WORKSPACE_ROOT=/home/user/project
+REMOTE_AI_APPROVAL_CHANNEL=remoteai.approval
+```
 
-Once AI can execute commands remotely, the safety model has to be designed early.
+The first rule of remote AI is: never let a task that appears remote silently fall back to local execution.
+
+## 7. Approval and Sandbox
+
+Once AI can execute commands remotely, the safety model has to be part of the core design.
 
 The default policy is:
 
@@ -218,11 +271,14 @@ sudo/root/system path: deny by default
 outside workspace root: deny unless explicitly allowed
 ```
 
-Local UI can show approval dialogs, but path checks cannot live only in local UI. The remote bridge also needs a workspace sandbox:
+Local UI can show approval prompts, but path checks cannot live only in local UI. The remote bridge also needs a workspace sandbox:
 
 ```text
 workspace root realpath = /home/user/project
-candidate path -> clean -> resolve symlink -> verify startsWith(root)
+candidate path
+  -> clean
+  -> resolve symlink
+  -> verify startsWith(root)
 ```
 
 I had Codex start with tests like:
@@ -234,66 +290,78 @@ workspace sandbox:
 - /home/user/project/../.ssh/id_rsa blocked after normalization
 ```
 
-These tests are simple, but they guard against the dangerous illusion that a path string merely “looks inside” the workspace.
+Small tests like these prevent a dangerous illusion: a path string looking inside the workspace does not mean it is safe.
 
-## Hiding Native Chat UI Without Deleting the World
+## 8. Native Chat UI
 
-Code-OSS includes native Chat, Inline Chat, and Quick Chat entry points. This fork is focused on RemoteAI + Codex, so I did not want to expose another native chat surface.
+Code-OSS includes native Chat, Inline Chat, and Quick Chat entries. This fork is focused on RemoteAI + Codex, so I did not want another native chat surface.
 
-The approach was to disable product-level entry points, not delete the source tree:
+The approach was “disable entry points, do not delete the world”:
 
 - Hide Workbench Chat, Inline Chat, and Quick Chat.
 - Remove native Chat picks from the command palette.
-- Keep required chat-shaped types and DI services to avoid breaking third-party compatibility and proposed APIs.
+- Keep required chat-shaped types and DI services.
 - Keep the `openai.chatgpt` proposed API entries in `product.json`.
 
-This is exactly the kind of bounded search-and-close task Codex is good at: find contribution points, disable entry points, compile, search for residual UI affordances.
+That reduces product noise without breaking compatibility layers Codex or third-party extensions may still need.
 
-## Verification Evidence
+## 9. Verification Evidence
 
-I did not want the project to stop at “the architecture sounds right.” It now has several layers of verification:
+I did not want the work to stop at “the architecture sounds right.” The project ended up with several verification layers:
 
 - `releaseDoctor` checks tarballs and manifests.
 - Gulp compiles `our-remote-ssh`, `ai-codex-remote-bridge`, and `ai-approval-ui`.
-- Mocha covers remote-ai packaging, the SSH resolver, the bridge, and the workspace sandbox.
+- Mocha covers packaging, the SSH resolver, the bridge, and workspace sandboxing.
 - `ssh dev` validates remote install, startup, tunnels, and glibc 2.17.
 - GUI validation covers the RemoteAI dashboard, remote folder picking, Explorer, terminal, and file saves.
 - Codex binding validation ensures remote workspaces do not silently fall back to local `codex`.
 
-One fresh validation record showed the remote server installed under `~/.remote-ai-server/bin/<commit>` on `ssh dev`, bundled Node was `v20.18.2`, remote `glibc` was 2.17, the bridge extension existed, and the audit hash chain recorded bootstrap, install, launch, and tunnel events.
+One remote validation record looked like this:
 
-That evidence is better than “I think the architecture is right.”
+```text
+server dir: ~/.remote-ai-server/bin/<commit>
+bundled Node: v20.18.2
+remote glibc: 2.17
+bridge extension: installed
+audit chain: bootstrap -> install -> launch -> tunnel
+```
 
-## How I Used Codex
+That evidence is more useful than “I think the architecture is right.”
+
+## 10. How I Used Codex
 
 In this project, Codex was most valuable in three roles:
 
-1. Evidence gathering: finding real Code-OSS registration points for remote authority, `server-main`, `extensionKind`, and chat contributions.
-2. Planning: splitting Remote-SSH, server packaging, Codex bridge, approval, and CentOS gates into testable tasks.
-3. Convergent implementation: changing one boundary at a time with a test or verification script.
+1. Evidence gathering: find the real registration points for remote authority, `server-main`, `extensionKind`, and chat contributions.
+2. Planning: split Remote-SSH, server packaging, Codex bridge, approval, and CentOS gates into verifiable tasks.
+3. Convergent implementation: change one boundary at a time with a test or verification script.
 
 The prompt pattern I kept using was:
 
 ```text
 First search and list evidence. Do not edit code.
+
 Based on the evidence, give 2-3 options and recommend one.
 Then implement only the smallest working slice of the recommended option.
 Add a test or verification script.
-Do not refactor unrelated modules. Do not delete compatibility layers.
+
+Do not refactor unrelated modules.
+Do not delete compatibility layers.
+Do not copy closed-source implementations.
 ```
 
-That pattern is powerful in large codebases because it makes Codex act as an investigator before it acts as an engineer.
+That pattern makes Codex act as an investigator before it acts as an engineer.
 
 ## Takeaway
 
-RemoteAI is not about “having SSH.” It is about giving the IDE and the AI correct remote semantics.
+RemoteAI is not about SSH. It is about giving the IDE and AI correct remote semantics.
 
 The judgments I kept are:
 
 - File sync is not Remote-SSH.
 - A virtual URI alone is not a full workspace.
 - Codex UI running locally does not mean Codex execution should run locally.
-- Remote AI needs a platform-correct CLI, remote cwd, remote toolchain, and an approval path.
-- Forking Code-OSS matters because it reuses the IDE platform instead of rebuilding an extension runtime.
+- Remote AI needs a platform-correct CLI, remote cwd, remote toolchain, and approval path.
+- Forking Code-OSS matters because it reuses the IDE platform instead of rebuilding the extension runtime.
 
-The complexity is real, but the direction is simple: every action should happen on the machine where it belongs. UI is local. Workspace is remote. AI execution is remote too. The resolver, bridge, server packaging, and sandbox all exist to protect that line.
+The direction is simple: every action should happen on the machine where it belongs. UI is local. Workspace is remote. AI execution is remote too. The resolver, bridge, server packaging, and sandbox all exist to protect that line.
